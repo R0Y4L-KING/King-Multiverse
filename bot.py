@@ -20,6 +20,7 @@ import threading
 from flask import Flask, jsonify
 from telethon import TelegramClient, Button
 from telethon.events import NewMessage, CallbackQuery
+from telethon.sessions import StringSession
 
 # ---------------------------------------------------------------------------
 # CONFIG — all secrets come from environment variables (set on Render)
@@ -88,7 +89,7 @@ def run_flask():
 # Telethon Clients — Bot mode + User session
 # ---------------------------------------------------------------------------
 bot = TelegramClient("king_bot", API_ID, API_HASH)
-user = TelegramClient("king_user", API_ID, API_HASH, session_string=SESSION_STRING) if SESSION_STRING else None
+user = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) if SESSION_STRING else None
 
 
 # ---------------------------------------------------------------------------
