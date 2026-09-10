@@ -17,6 +17,13 @@ import os
 import asyncio
 import logging
 import threading
+
+# Fix for Python 3.10+ — Pyrogram uses get_event_loop() which breaks
+try:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+except RuntimeError:
+    pass
+
 from flask import Flask, jsonify
 from pyrogram import Client, filters
 from pyrogram.types import (
