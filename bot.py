@@ -4,12 +4,13 @@ KING MULTIVERSE Telegram Bot
 Bot: @KING_Multiverse_Robot
 
 Uses Pyrogram with:
-  - BOT_TOKEN  -> Bot mode (handles /start, /help, buttons)
+  - BOT_TOKEN  -> Bot mode (handles /start, /help, buttons, auth key)
   - SESSION_STRING -> User mode (forwards messages from source channels to bot)
   - API_ID, API_HASH -> from my.telegram.org
+  - AUTH_KEY_URL -> link for getting auth key
 
 Deploy on Render:
-  - Set env vars: BOT_TOKEN, API_ID, API_HASH, SESSION_STRING
+  - Set env vars: BOT_TOKEN, API_ID, API_HASH, SESSION_STRING, AUTH_KEY_URL
   - Start command: python bot.py
 """
 
@@ -32,6 +33,7 @@ API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 SESSION_STRING = os.environ.get("SESSION_STRING", "")
+AUTH_KEY_URL = os.environ.get("AUTH_KEY_URL", "https://t.me/ModAppsKing")
 
 BOT_USERNAME = "KING_Multiverse_Robot"
 BANNER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Tg_Banner.jpg")
@@ -60,6 +62,14 @@ WELCOME_TEXT = (
     "Enjoy premium apps for free and keep modding! 🚀"
 )
 
+AUTH_KEY_TEXT = (
+    "🔒 **Auth Key Required**\n\n"
+    "To continue, generate your Auth Key using the link below:\n\n"
+    "🔗 [Click Here to Get Auth Key]({url})\n\n"
+    "⚠️ **Important:** Keep your Auth Key private and do not share it with anyone.\n\n"
+    "💡 If the link expires, simply request a new one from the app."
+)
+
 
 # ---------------------------------------------------------------------------
 # Flask keep-alive web server (required by Render free tier)
@@ -75,6 +85,7 @@ def home():
             "bot": f"@{BOT_USERNAME}",
             "channel": CHANNEL_URL,
             "session_string": "set" if SESSION_STRING else "not set",
+            "auth_key_url": AUTH_KEY_URL,
         }
     )
 
@@ -110,37 +121,62 @@ user = Client(
 
 
 # ---------------------------------------------------------------------------
-# Bot handlers
+# Helper — main inline keyboard (Join Channel, Join Group, How To Get Auth Key, Close)
 # ---------------------------------------------------------------------------
-@bot.on_message(filters.command("start"))
-async def start_handler(client: Client, message: Message):
-    """Send banner + welcome message when /start is received."""
-    user_info = await client.get_users(message.from_user.id)
-    first_name = user_info.first_name if user_info else ""
-
-    keyboard = InlineKeyboardMarkup(
+def main_keyboard():
+    return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton("📢 Join Channel", url=CHANNEL_URL),
                 InlineKeyboardButton("💬 Join Group", url=GROUP_URL),
-            ]
+            ],
+            [
+                InlineKeyboardButton("🔑 How To Get Auth Key", url=AUTH_KEY_URL),
+                InlineKeyboardButton("🔒 Close", callback_data="close"),
+            ],
         ]
     )
 
+
+# ---------------------------------------------------------------------------
+# Bot handlers
+# ---------------------------------------------------------------------------
+@bot.on_message(filters.command("start"))
+async def start_handler(client: Client, message: Message):
+    """Send banner + welcome message + auth key message when /start is received."""
+    user_info = await client.get_users(message.from_user.id)
+    first_name = user_info.first_name if user_info else ""
+
+    # 1. Send banner with welcome caption
     caption = WELCOME_TEXT.format(name=first_name, url=CHANNEL_URL)
 
     if os.path.exists(BANNER_PATH):
         await message.reply_photo(
             photo=BANNER_PATH,
             caption=caption,
-            reply_markup=keyboard,
+            reply_markup=main_keyboard(),
         )
     else:
         await message.reply_text(
             caption,
-            reply_markup=keyboard,
+            reply_markup=main_keyboard(),
             disable_web_page_preview=False,
         )
+
+    # 2. Send Auth Key required message
+    auth_msg = AUTH_KEY_TEXT.format(url=AUTH_KEY_URL)
+    await message.reply_text(
+        auth_msg,
+        reply_markup=main_keyboard(),
+        disable_web_page_preview=False,
+    )
+
+
+@bot.on_callback_query(filters.regex("close"))
+async def close_handler(client: Client, callback_query):
+    """Handle Close button — delete the message."""
+    await callback_query.message.delete()
+    await callback_query.answer("🔒 Closed!")
 
 
 @bot.on_message(filters.command("help"))
@@ -149,10 +185,11 @@ async def help_handler(client: Client, message: Message):
     await message.reply_text(
         "🤖 **KING MULTIVERSE Bot**\n\n"
         "Commands:\n"
-        "/start - Welcome message\n"
+        "/start - Welcome + Auth Key\n"
         "/help - This message\n"
         "/status - Bot status\n\n"
         f"Channel: {CHANNEL_URL}",
+        reply_markup=main_keyboard(),
     )
 
 
@@ -171,7 +208,8 @@ async def status_handler(client: Client, message: Message):
         status_text += "👤 User Session: **Not configured**\n"
 
     status_text += f"📡 API_ID: `{API_ID}`\n"
-    status_text += f"🔗 Channel: {CHANNEL_URL}"
+    status_text += f"🔗 Channel: {CHANNEL_URL}\n"
+    status_text += f"🔑 Auth Key URL: {AUTH_KEY_URL}"
 
     await message.reply_text(status_text)
 
@@ -181,7 +219,8 @@ async def fallback_handler(client: Client, message: Message):
     """Reply to any unrecognized message."""
     await message.reply_text(
         "I didn't understand that. Send /start to begin or visit "
-        f"{CHANNEL_URL}"
+        f"{CHANNEL_URL}",
+        reply_markup=main_keyboard(),
     )
 
 
@@ -232,6 +271,7 @@ async def main():
     logger.info(f"✅ Bot started: @{bot_info.username}")
     logger.info(f"   Channel: {CHANNEL_URL}")
     logger.info(f"   Group: {GROUP_URL}")
+    logger.info(f"   Auth Key URL: {AUTH_KEY_URL}")
 
     # Keep running
     await asyncio.Event().wait()
