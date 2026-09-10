@@ -12,3 +12,5 @@ services:
         sync: false
       - key: API_HASH
         sync: false
+      - key: SESSION_STRING
+        sync: false
