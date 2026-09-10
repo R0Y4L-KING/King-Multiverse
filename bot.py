@@ -3,7 +3,7 @@ KING MULTIVERSE Telegram Bot
 ============================
 Bot: @KING_Multiverse_Robot
 
-Uses Pyrogram with:
+Uses Telethon with:
   - BOT_TOKEN  -> Bot mode (handles /start, /help, buttons)
   - SESSION_STRING -> User mode (forwards messages from source channels to bot)
   - API_ID, API_HASH -> from my.telegram.org
@@ -17,20 +17,9 @@ import os
 import asyncio
 import logging
 import threading
-
-# Fix for Python 3.10+ — Pyrogram uses get_event_loop() which breaks
-try:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-except RuntimeError:
-    pass
-
 from flask import Flask, jsonify
-from pyrogram import Client, filters
-from pyrogram.types import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Message,
-)
+from telethon import TelegramClient, Button
+from telethon.events import NewMessage, CallbackQuery
 
 # ---------------------------------------------------------------------------
 # CONFIG — all secrets come from environment variables (set on Render)
@@ -96,91 +85,77 @@ def run_flask():
 
 
 # ---------------------------------------------------------------------------
-# Pyrogram Client — Bot mode + User session
+# Telethon Clients — Bot mode + User session
 # ---------------------------------------------------------------------------
-bot = Client(
-    "king_multiverse_bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    in_memory=True,
-)
-
-# User client for forwarding messages (uses SESSION_STRING)
-user = Client(
-    "king_multiverse_user",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    session_string=SESSION_STRING,
-    in_memory=True,
-) if SESSION_STRING else None
+bot = TelegramClient("king_bot", API_ID, API_HASH)
+user = TelegramClient("king_user", API_ID, API_HASH, session_string=SESSION_STRING) if SESSION_STRING else None
 
 
 # ---------------------------------------------------------------------------
 # Helper — main inline keyboard
 # ---------------------------------------------------------------------------
 def main_keyboard():
-    return InlineKeyboardMarkup(
+    return [
         [
-            [
-                InlineKeyboardButton("📢 Join Channel", url=CHANNEL_URL),
-                InlineKeyboardButton("💬 Join Group", url=GROUP_URL),
-            ],
-            [
-                InlineKeyboardButton("🔒 Close", callback_data="close"),
-            ],
-        ]
-    )
+            Button.url("📢 Join Channel", CHANNEL_URL),
+            Button.url("💬 Join Group", GROUP_URL),
+        ],
+        [
+            Button.inline("🔒 Close", data="close"),
+        ],
+    ]
 
 
 # ---------------------------------------------------------------------------
 # Bot handlers
 # ---------------------------------------------------------------------------
-@bot.on_message(filters.command("start"))
-async def start_handler(client: Client, message: Message):
+@bot.on(NewMessage(pattern="/start"))
+async def start_handler(event):
     """Send banner + welcome message when /start is received."""
-    user_info = await client.get_users(message.from_user.id)
-    first_name = user_info.first_name if user_info else ""
+    sender = await event.get_sender()
+    first_name = sender.first_name if sender else ""
 
     caption = WELCOME_TEXT.format(name=first_name, url=CHANNEL_URL)
 
     if os.path.exists(BANNER_PATH):
-        await message.reply_photo(
-            photo=BANNER_PATH,
-            caption=caption,
-            reply_markup=main_keyboard(),
+        await event.reply(
+            caption,
+            file=BANNER_PATH,
+            buttons=main_keyboard(),
+            link_preview=False,
         )
     else:
-        await message.reply_text(
+        await event.reply(
             caption,
-            reply_markup=main_keyboard(),
-            disable_web_page_preview=False,
+            buttons=main_keyboard(),
+            link_preview=False,
         )
 
 
-@bot.on_callback_query(filters.regex("close"))
-async def close_handler(client: Client, callback_query):
+@bot.on(CallbackQuery(data="close"))
+async def close_handler(event):
     """Handle Close button — delete the message."""
-    await callback_query.message.delete()
-    await callback_query.answer("🔒 Closed!")
+    await event.delete()
+    await event.answer("🔒 Closed!")
 
 
-@bot.on_message(filters.command("help"))
-async def help_handler(client: Client, message: Message):
+@bot.on(NewMessage(pattern="/help"))
+async def help_handler(event):
     """Simple /help command."""
-    await message.reply_text(
+    await event.reply(
         "🤖 **KING MULTIVERSE Bot**\n\n"
         "Commands:\n"
         "/start - Welcome message\n"
         "/help - This message\n"
         "/status - Bot status\n\n"
         f"Channel: {CHANNEL_URL}",
-        reply_markup=main_keyboard(),
+        buttons=main_keyboard(),
+        link_preview=False,
     )
 
 
-@bot.on_message(filters.command("status"))
-async def status_handler(client: Client, message: Message):
+@bot.on(NewMessage(pattern="/status"))
+async def status_handler(event):
     """Check bot and user session status."""
     status_text = "🤖 Bot: **Online**\n"
 
@@ -196,31 +171,20 @@ async def status_handler(client: Client, message: Message):
     status_text += f"📡 API_ID: `{API_ID}`\n"
     status_text += f"🔗 Channel: {CHANNEL_URL}"
 
-    await message.reply_text(status_text)
-
-
-@bot.on_message(filters.text & ~filters.command(["start", "help", "status"]))
-async def fallback_handler(client: Client, message: Message):
-    """Reply to any unrecognized message."""
-    await message.reply_text(
-        "I didn't understand that. Send /start to begin or visit "
-        f"{CHANNEL_URL}",
-        reply_markup=main_keyboard(),
-    )
+    await event.reply(status_text)
 
 
 # ---------------------------------------------------------------------------
 # User session — Forward messages from source channels to bot
 # ---------------------------------------------------------------------------
 if user:
-    @user.on_message()
-    async def forward_handler(client: Client, message: Message):
+    @user.on(NewMessage())
+    async def forward_handler(event):
         """Forward incoming messages from source chats to the bot."""
         try:
-            # If SOURCE_CHAT_IDS is empty, forward from all chats
-            if not SOURCE_CHAT_IDS or message.chat.id in SOURCE_CHAT_IDS:
-                await message.forward(chat_id=BOT_TOKEN)
-                logger.info(f"Forwarded message from chat {message.chat.id}")
+            if not SOURCE_CHAT_IDS or event.chat_id in SOURCE_CHAT_IDS:
+                await event.forward_to(bot)
+                logger.info(f"Forwarded message from chat {event.chat_id}")
         except Exception as e:
             logger.error(f"Forward error: {e}")
 
@@ -231,7 +195,6 @@ if user:
 async def main():
     if not BOT_TOKEN:
         print("ERROR: BOT_TOKEN environment variable is not set!")
-        print("Set it on Render > Environment > Add Environment Variable")
         return
 
     if not API_ID or not API_HASH:
@@ -251,14 +214,14 @@ async def main():
         logger.warning("⚠️ SESSION_STRING not set — message forwarding disabled!")
 
     # Start bot
-    await bot.start()
-    bot_info = await bot.get_me()
-    logger.info(f"✅ Bot started: @{bot_info.username}")
+    await bot.start(bot_token=BOT_TOKEN)
+    me = await bot.get_me()
+    logger.info(f"✅ Bot started: @{me.username}")
     logger.info(f"   Channel: {CHANNEL_URL}")
     logger.info(f"   Group: {GROUP_URL}")
 
     # Keep running
-    await asyncio.Event().wait()
+    await bot.run_until_disconnected()
 
 
 if __name__ == "__main__":
@@ -267,5 +230,5 @@ if __name__ == "__main__":
     flask_thread.start()
     logger.info(f"Flask keep-alive running on port {PORT}")
 
-    # Run the Pyrogram clients
+    # Run the Telethon clients
     asyncio.run(main())
