@@ -4,7 +4,8 @@ Telegram Bot: **@KING_Multiverse_Robot**
 
 ## Features
 - Welcome message with banner image on `/start`
-- Inline buttons: Join Channel + Join Group
+- **Auth Key flow** — sends auth key required message with link
+- Inline buttons: Join Channel, Join Group, How To Get Auth Key, Close
 - **Session String support** — forward messages from main account/channel
 - Flask keep-alive server for Render free tier
 - `/status` command to check bot + user session status
@@ -17,6 +18,7 @@ Telegram Bot: **@KING_Multiverse_Robot**
 | `API_ID` | Telegram API ID from my.telegram.org |
 | `API_HASH` | Telegram API hash from my.telegram.org |
 | `SESSION_STRING` | Pyrogram session string (for message forwarding) |
+| `AUTH_KEY_URL` | URL for "Get Auth Key" button (default: https://t.me/ModAppsKing) |
 
 ## How to get SESSION_STRING
 
@@ -43,7 +45,7 @@ with client:
 2. Connect your GitHub repo `King-Multiverse`
 3. **Build Command:** `pip install -r requirements.txt`
 4. **Start Command:** `python bot.py`
-5. Add environment variables (BOT_TOKEN, API_ID, API_HASH, SESSION_STRING)
+5. Add environment variables (BOT_TOKEN, API_ID, API_HASH, SESSION_STRING, AUTH_KEY_URL)
 6. Deploy!
 
 ## Run Locally
@@ -54,6 +56,7 @@ export BOT_TOKEN="your_bot_token"
 export API_ID="your_api_id"
 export API_HASH="your_api_hash"
 export SESSION_STRING="your_session_string"
+export AUTH_KEY_URL="your_auth_key_url"
 python bot.py
 ```
 
