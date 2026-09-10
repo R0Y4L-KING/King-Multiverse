@@ -1,38 +1,25 @@
 """
 SESSION STRING GENERATOR for KING MULTIVERSE Bot
 =================================================
-Run this script locally to generate a valid Pyrogram v2 session string.
+Uses raw Telethon to avoid Pyrogram's event loop issues on Python 3.14.
 
 Usage:
-    pip install pyrogram==2.0.106 tgcrypto==1.2.5
+    pip install telethon
     python generate_session.py
 
 Enter your API_ID, API_HASH, phone number and OTP when prompted.
 Copy the output string and set it as SESSION_STRING on Render.
 """
 
-import asyncio
-
-# Fix for Python 3.10+ — Pyrogram uses get_event_loop() which breaks
-try:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-except RuntimeError:
-    pass
-
-from pyrogram import Client
+from telethon.sync import TelegramClient
 
 API_ID = int(input("Enter API_ID: "))
 API_HASH = input("Enter API_HASH: ")
 
-app = Client(
-    "king_session",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    in_memory=True,
-)
+client = TelegramClient("king_session", API_ID, API_HASH)
 
-with app:
-    session_string = app.export_session_string()
+with client:
+    session_string = client.session.save()
     print("\n" + "=" * 60)
     print("YOUR SESSION STRING (copy everything below):")
     print("=" * 60)
