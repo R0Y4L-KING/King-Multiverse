@@ -11,6 +11,14 @@ Enter your API_ID, API_HASH, phone number and OTP when prompted.
 Copy the output string and set it as SESSION_STRING on Render.
 """
 
+import asyncio
+
+# Fix for Python 3.10+ — Pyrogram uses get_event_loop() which breaks
+try:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+except RuntimeError:
+    pass
+
 from pyrogram import Client
 
 API_ID = int(input("Enter API_ID: "))
