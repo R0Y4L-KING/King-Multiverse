@@ -18,6 +18,7 @@ Features:
   - Join Group button → our group
 - Forwards media (photos, videos, documents) from TARGET bot
 - Every /start gets a FRESH arolinks URL from TARGET bot
+- Long timeout (3 min) for video responses
 
 Deploy on Render:
   - Set env vars: BOT_TOKEN, API_ID, API_HASH, SESSION_STRING, TARGET_BOT
@@ -193,8 +194,11 @@ def copy_buttons(telethon_msg):
 # ---------------------------------------------------------------------------
 # Core — send message to TARGET bot and wait for response
 # ---------------------------------------------------------------------------
-async def send_to_target(text):
-    """Send a message to the TARGET bot and capture its response."""
+async def send_to_target(text, timeout=30.0):
+    """Send a message to the TARGET bot and capture its response.
+
+    Use longer timeout for quality requests (videos take time).
+    """
     global captured_msg, response_event
 
     if not user:
@@ -212,11 +216,11 @@ async def send_to_target(text):
         return None
 
     try:
-        await asyncio.wait_for(response_event.wait(), timeout=30.0)
+        await asyncio.wait_for(response_event.wait(), timeout=timeout)
         logger.info(f"Got response from TARGET bot: {(captured_msg.text or '')[:50]}")
         return captured_msg
     except asyncio.TimeoutError:
-        logger.error("Timeout waiting for TARGET bot response!")
+        logger.error(f"Timeout ({timeout}s) waiting for TARGET bot response!")
         return None
 
 
@@ -240,17 +244,18 @@ async def click_target_button(row_idx, col_idx):
             if "start" in params:
                 start_value = params["start"][0]
                 await user.send_message(TARGET_BOT, f"/start {start_value}")
-                await asyncio.wait_for(response_event.wait(), timeout=60.0)
+                await asyncio.wait_for(response_event.wait(), timeout=180.0)
                 return captured_msg
+            # URL button without start param — just forward the URL to user
             return None
         elif hasattr(btn, "data") and btn.data:
             # Callback button → click it on target
             await btn.click()
-            await asyncio.wait_for(response_event.wait(), timeout=60.0)
+            await asyncio.wait_for(response_event.wait(), timeout=180.0)
             return captured_msg
         else:
             await user.send_message(TARGET_BOT, "/start")
-            await asyncio.wait_for(response_event.wait(), timeout=60.0)
+            await asyncio.wait_for(response_event.wait(), timeout=180.0)
             return captured_msg
 
         return None
@@ -283,7 +288,7 @@ async def forward_response(event, target_msg, status_msg=None):
         # Check if the message has media (photo, video, document)
         if target_msg.media:
             try:
-                logger.info("Forwarding response with media...")
+                logger.info(f"Forwarding media: {type(target_msg.media).__name__}")
                 # Send media with caption and buttons
                 await event.reply(
                     text or " ",
@@ -328,11 +333,27 @@ async def start_handler(event):
     """User sends /start → forward to TARGET bot → send response back."""
     text = event.raw_text.strip()
 
-    status = await event.reply("⏳ Processing...")
+    # Check if this is a quality request (e.g. /start PARAM_480)
+    # Quality requests return videos — need much longer timeout
+    is_quality_request = False
+    parts = text.split(" ", 1)
+    if len(parts) > 1:
+        param = parts[1].strip().lower()
+        for q in ["_720", "_480", "_360", "_240", "720p", "480p", "360p", "240p"]:
+            if q in param:
+                is_quality_request = True
+                break
+
+    if is_quality_request:
+        status = await event.reply("⏳ Fetching video... This may take 1-2 minutes.")
+        timeout = 180.0  # 3 minutes for video responses
+    else:
+        status = await event.reply("⏳ Processing...")
+        timeout = 30.0
 
     try:
         # Forward /start (with or without param) to TARGET bot
-        target_response = await send_to_target(text)
+        target_response = await send_to_target(text, timeout=timeout)
         await forward_response(event, target_response, status)
     except Exception as e:
         logger.error(f"Error in start handler: {e}")
@@ -388,7 +409,12 @@ async def callback_handler(event):
     # Extract button text from our callback data
     button_text = event.data.decode("utf-8")[4:]  # Remove "act_" prefix
 
-    status = await event.reply("⏳ Processing...")
+    # Check if this is a quality button (720p, 480p etc.) — videos take time
+    is_quality = any(q in button_text.lower() for q in ["720", "480", "360", "240"])
+    if is_quality:
+        status = await event.reply("⏳ Fetching video... This may take 1-2 minutes.")
+    else:
+        status = await event.reply("⏳ Processing...")
 
     button_found = False
     if last_target_msg and last_target_msg.buttons:
