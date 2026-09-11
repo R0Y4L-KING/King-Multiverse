@@ -1,10 +1,10 @@
 """
-KING MULTIVERSE Telegram Bot — Clone of @AS_Multiverse_Robot
+KING MULTIVERSE Telegram Bot — Clone of @AS_Multiverserobot
 =============================================================
 Bot: @KING_Multiverse_Robot
 
 ARCHITECTURE (Proxy/Mirror Bot):
-  User → Our Bot → (SESSION_STRING) → TARGET BOT (@AS_Multiverse_Robot)
+  User → Our Bot → (SESSION_STRING) → TARGET BOT (@AS_Multiverserobot)
                                               ↓
   User ← Our Bot ← (copied response) ← Auth Key message + fresh arolinks URL
 
@@ -35,7 +35,7 @@ API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 SESSION_STRING = os.environ.get("SESSION_STRING", "")
-TARGET_BOT = os.environ.get("TARGET_BOT", "@AS_Multiverse_Robot")
+TARGET_BOT = os.environ.get("TARGET_BOT", "@AS_Multiverserobot")
 
 BOT_USERNAME = "KING_Multiverse_Robot"
 BANNER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Tg_Banner.jpg")
@@ -151,17 +151,25 @@ async def send_to_target(text):
     global captured_msg, response_event
 
     if not user:
+        logger.error("User client not available!")
         return None
 
     response_event.clear()
     captured_msg = None
 
-    await user.send_message(TARGET_BOT, text)
+    try:
+        await user.send_message(TARGET_BOT, text)
+        logger.info(f"Sent to TARGET bot: {text[:50]}")
+    except Exception as e:
+        logger.error(f"Failed to send to TARGET bot: {e}")
+        return None
 
     try:
         await asyncio.wait_for(response_event.wait(), timeout=30.0)
+        logger.info(f"Got response from TARGET bot: {(captured_msg.text or '')[:50]}")
         return captured_msg
     except asyncio.TimeoutError:
+        logger.error("Timeout waiting for TARGET bot response!")
         return None
 
 
@@ -238,18 +246,29 @@ async def start_handler(event):
 
     status = await event.reply("⏳ Processing...")
 
-    # Forward /start (with or without param) to TARGET bot
-    target_response = await send_to_target(text)
-
-    await forward_response(event, target_response, status)
+    try:
+        # Forward /start (with or without param) to TARGET bot
+        target_response = await send_to_target(text)
+        await forward_response(event, target_response, status)
+    except Exception as e:
+        logger.error(f"Error in start handler: {e}")
+        try:
+            await status.delete()
+        except Exception:
+            pass
+        await event.reply("❌ Something went wrong. Try /start again.")
 
 
 @bot.on(events.NewMessage(pattern="/help"))
 async def help_handler(event):
     """User sends /help → forward to TARGET bot."""
     status = await event.reply("⏳ Processing...")
-    target_response = await send_to_target("/start")
-    await forward_response(event, target_response, status)
+    try:
+        target_response = await send_to_target("/start")
+        await forward_response(event, target_response, status)
+    except Exception as e:
+        logger.error(f"Error in help handler: {e}")
+        await forward_response(event, None, status)
 
 
 @bot.on(events.NewMessage(pattern="/status"))
@@ -315,10 +334,13 @@ async def text_handler(event):
 
     status = await event.reply("⏳ Processing...")
 
-    # Forward user's text to TARGET bot
-    target_response = await send_to_target(event.raw_text)
-
-    await forward_response(event, target_response, status)
+    try:
+        # Forward user's text to TARGET bot
+        target_response = await send_to_target(event.raw_text)
+        await forward_response(event, target_response, status)
+    except Exception as e:
+        logger.error(f"Error in text handler: {e}")
+        await forward_response(event, None, status)
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +362,16 @@ async def main():
             await user.start()
             me = await user.get_me()
             logger.info(f"✅ User session started: {me.first_name} (@{me.username})")
-            logger.info(f"🎯 Target bot: {TARGET_BOT}")
+
+            # Resolve TARGET_BOT entity
+            try:
+                target_entity = await user.get_entity(TARGET_BOT)
+                logger.info(f"🎯 Target bot resolved: {getattr(target_entity, 'title', TARGET_BOT)}")
+            except Exception as e:
+                logger.error(f"❌ Could not resolve TARGET_BOT '{TARGET_BOT}': {e}")
+                logger.error("   Make sure the username is correct!")
+                return
+
         except Exception as e:
             logger.error(f"Failed to start user session: {e}")
             return
