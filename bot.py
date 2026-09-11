@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 AUTH_KEY_TEXT = (
     "🔒 **Auth Key Required**\n\n"
     "To continue, generate your Auth Key using the link below:\n\n"
-    "🌐 {url}\n\n"
+    "[🔗 Click Here to Get Auth Key]({url})\n\n"
     "⚠️ **Important:** Keep your Auth Key private and do not share it with anyone.\n\n"
     "💡 If the link expires, simply request a new one from the app."
 )
@@ -107,7 +107,7 @@ user = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) if SESSIO
 
 
 # ---------------------------------------------------------------------------
-# Helper — main inline keyboard
+# Helper — keyboards
 # ---------------------------------------------------------------------------
 def main_keyboard():
     return [
@@ -116,6 +116,20 @@ def main_keyboard():
             Button.url("💬 Join Group", GROUP_URL),
         ],
         [
+            Button.inline("🔒 Close", data="close"),
+        ],
+    ]
+
+
+def auth_key_keyboard():
+    """Keyboard for Auth Key message — matches original bot."""
+    return [
+        [
+            Button.url("📢 Join Channel", CHANNEL_URL),
+            Button.url("💬 Join Group", GROUP_URL),
+        ],
+        [
+            Button.url("🔑 How To Get Auth Key", AUTH_KEY_URL),
             Button.inline("🔒 Close", data="close"),
         ],
     ]
@@ -140,7 +154,7 @@ async def start_handler(event):
         auth_msg = AUTH_KEY_TEXT.format(url=AUTH_KEY_URL)
         await event.reply(
             auth_msg,
-            buttons=main_keyboard(),
+            buttons=auth_key_keyboard(),
             link_preview=False,
         )
     else:
