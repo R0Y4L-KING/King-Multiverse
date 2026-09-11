@@ -11,14 +11,10 @@ ARCHITECTURE (Proxy/Mirror Bot):
 Features:
 - Forwards ALL messages to TARGET bot via user session
 - Copies responses (text + media + buttons) to user
-- Replaces AS Multiverse links with OUR links:
-  - asmultiverse.com → t.me/ModAppsKing
-  - AS_Multiverserobot → KING_Multiverse_Robot (in deep links)
-  - Join Channel button → our channel
-  - Join Group button → our group
-- Forwards media (photos, videos, documents) from TARGET bot
-- Every /start gets a FRESH arolinks URL from TARGET bot
+- Replaces AS Multiverse links with OUR links
+- 3-tier media delivery: FAST (user session direct) → MEDIUM (bot w/ ref) → SLOW (download+upload)
 - Long timeout (3 min) for video responses
+- Every /start gets a FRESH arolinks URL from TARGET bot
 
 Deploy on Render:
   - Set env vars: BOT_TOKEN, API_ID, API_HASH, SESSION_STRING, TARGET_BOT
@@ -111,7 +107,7 @@ def replace_url(url):
     """Replace AS Multiverse URLs with our bot's URLs."""
     if not url:
         return url
-    # Replace bot username in deep links
+    # Replace bot username in deep links (t.me/AS_Multiverserobot → t.me/KING_Multiverse_Robot)
     url = url.replace("AS_Multiverserobot", BOT_USERNAME)
     # Replace website with our channel
     url = url.replace("https://asmultiverse.com", CHANNEL_URL)
@@ -268,10 +264,16 @@ async def click_target_button(row_idx, col_idx):
 
 
 # ---------------------------------------------------------------------------
-# Forward target's response to user — with media support
+# Forward target's response to user — 3-tier media delivery
 # ---------------------------------------------------------------------------
 async def forward_response(event, target_msg, status_msg=None):
-    """Send the TARGET bot's response to the user — text + media + buttons."""
+    """Send the TARGET bot's response to the user — text + media + buttons.
+
+    Media delivery strategy (fastest to slowest):
+    1. FAST: user.send_file() with file reference → instant, no download
+    2. MEDIUM: bot sends with media reference
+    3. SLOW: download to disk then re-upload
+    """
     global last_target_msg
 
     if status_msg:
@@ -287,9 +289,30 @@ async def forward_response(event, target_msg, status_msg=None):
 
         # Check if the message has media (photo, video, document)
         if target_msg.media:
+            # FAST PATH: Send media directly via USER session
+            # This uses the file reference — no download/re-upload needed!
+            # Telegram just copies the file to the user's chat. INSTANT!
             try:
-                logger.info(f"Forwarding media: {type(target_msg.media).__name__}")
-                # Send media with caption and buttons
+                logger.info(f"Sending media via USER session (fast): {type(target_msg.media).__name__}")
+                await user.send_file(
+                    event.chat_id,  # End user's chat ID
+                    file=target_msg.media,
+                    caption=text or None,
+                    supports_streaming=True,
+                )
+                # Send buttons separately via bot (user session can't send inline buttons)
+                if buttons:
+                    await event.reply("👆 Your file is above!", buttons=buttons, link_preview=False)
+                else:
+                    await event.reply("✅ Done", link_preview=False)
+                return
+            except Exception as e:
+                logger.error(f"User session send failed: {e}")
+                # Fallback: try sending via BOT with media reference
+
+            # MEDIUM PATH: Send via BOT with media reference
+            try:
+                logger.info("Trying BOT send with media reference...")
                 await event.reply(
                     text or " ",
                     file=target_msg.media,
@@ -298,26 +321,27 @@ async def forward_response(event, target_msg, status_msg=None):
                 )
                 return
             except Exception as e:
-                logger.error(f"Failed to send media directly: {e}")
-                # Fallback: try downloading and re-uploading
-                try:
-                    logger.info("Trying download & re-upload...")
-                    media_path = await target_msg.download_media()
-                    if media_path:
-                        await event.reply(
-                            text or " ",
-                            file=media_path,
-                            buttons=buttons,
-                            link_preview=False,
-                        )
-                        # Cleanup
-                        try:
-                            os.remove(media_path)
-                        except Exception:
-                            pass
-                        return
-                except Exception as e2:
-                    logger.error(f"Download & re-upload also failed: {e2}")
+                logger.error(f"Bot media send failed: {e}")
+
+            # SLOW PATH: Download & re-upload via bot
+            try:
+                logger.info("Trying download & re-upload (slow)...")
+                media_path = await target_msg.download_media()
+                if media_path:
+                    await event.reply(
+                        text or " ",
+                        file=media_path,
+                        buttons=buttons,
+                        link_preview=False,
+                    )
+                    # Cleanup
+                    try:
+                        os.remove(media_path)
+                    except Exception:
+                        pass
+                    return
+            except Exception as e2:
+                logger.error(f"Download & re-upload failed: {e2}")
 
         # Text only (no media or media failed)
         await event.reply(text or "✅ Done", buttons=buttons, link_preview=False)
@@ -345,7 +369,7 @@ async def start_handler(event):
                 break
 
     if is_quality_request:
-        status = await event.reply("⏳ Fetching video... This may take 1-2 minutes.")
+        status = await event.reply("⏳ Fetching video... This may take a moment.")
         timeout = 180.0  # 3 minutes for video responses
     else:
         status = await event.reply("⏳ Processing...")
@@ -412,7 +436,7 @@ async def callback_handler(event):
     # Check if this is a quality button (720p, 480p etc.) — videos take time
     is_quality = any(q in button_text.lower() for q in ["720", "480", "360", "240"])
     if is_quality:
-        status = await event.reply("⏳ Fetching video... This may take 1-2 minutes.")
+        status = await event.reply("⏳ Fetching video... This may take a moment.")
     else:
         status = await event.reply("⏳ Processing...")
 
