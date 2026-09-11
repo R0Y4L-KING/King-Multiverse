@@ -7,10 +7,15 @@ Uses Telethon with:
   - BOT_TOKEN  -> Bot mode (handles /start, /help, buttons)
   - SESSION_STRING -> User mode (forwards messages from source channels to bot)
   - API_ID, API_HASH -> from my.telegram.org
+  - AUTH_KEY_URL -> link for getting auth key (used in auth key message)
 
 Deploy on Render:
-  - Set env vars: BOT_TOKEN, API_ID, API_HASH, SESSION_STRING
+  - Set env vars: BOT_TOKEN, API_ID, API_HASH, SESSION_STRING, AUTH_KEY_URL
   - Start command: python bot.py
+
+Bot Behaviour:
+  - /start (no param)    -> Welcome message with banner
+  - /start <param>       -> Auth Key message (when app redirects to bot)
 """
 
 import os
@@ -34,6 +39,7 @@ BOT_USERNAME = "KING_Multiverse_Robot"
 BANNER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Tg_Banner.jpg")
 CHANNEL_URL = "https://t.me/ModAppsKing"
 GROUP_URL = "https://t.me/ANONYMOUS_GROUP_KING"
+AUTH_KEY_URL = os.environ.get("AUTH_KEY_URL", "https://t.me/ModAppsKing")
 PORT = int(os.environ.get("PORT", 10000))
 
 # Source channel/chat IDs from where messages should be forwarded to the bot
@@ -47,6 +53,14 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+
+AUTH_KEY_TEXT = (
+    "🔒 **Auth Key Required**\n\n"
+    "To continue, generate your Auth Key using the link below:\n\n"
+    "🌐 {url}\n\n"
+    "⚠️ **Important:** Keep your Auth Key private and do not share it with anyone.\n\n"
+    "💡 If the link expires, simply request a new one from the app."
+)
 
 WELCOME_TEXT = (
     "👋 Hello {name}!\n\n"
@@ -112,25 +126,39 @@ def main_keyboard():
 # ---------------------------------------------------------------------------
 @bot.on(NewMessage(pattern="/start"))
 async def start_handler(event):
-    """Send banner + welcome message when /start is received."""
+    """Handle /start — with or without parameter."""
     sender = await event.get_sender()
     first_name = sender.first_name if sender else ""
+    text = event.raw_text.strip()
 
-    caption = WELCOME_TEXT.format(name=first_name, url=CHANNEL_URL)
+    # Check if /start has a parameter (e.g. /start auth, /start app, /start xyz)
+    parts = text.split(" ", 1)
+    has_param = len(parts) > 1 and parts[1].strip()
 
-    if os.path.exists(BANNER_PATH):
+    if has_param:
+        # /start <param> — App redirect → send Auth Key message
+        auth_msg = AUTH_KEY_TEXT.format(url=AUTH_KEY_URL)
         await event.reply(
-            caption,
-            file=BANNER_PATH,
+            auth_msg,
             buttons=main_keyboard(),
             link_preview=False,
         )
     else:
-        await event.reply(
-            caption,
-            buttons=main_keyboard(),
-            link_preview=False,
-        )
+        # Plain /start → normal welcome message
+        caption = WELCOME_TEXT.format(name=first_name, url=CHANNEL_URL)
+        if os.path.exists(BANNER_PATH):
+            await event.reply(
+                caption,
+                file=BANNER_PATH,
+                buttons=main_keyboard(),
+                link_preview=False,
+            )
+        else:
+            await event.reply(
+                caption,
+                buttons=main_keyboard(),
+                link_preview=False,
+            )
 
 
 @bot.on(CallbackQuery(data="close"))
