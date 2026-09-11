@@ -8,10 +8,16 @@ ARCHITECTURE (Proxy/Mirror Bot):
                                               ↓
   User ← Our Bot ← (copied response) ← Auth Key message + fresh arolinks URL
 
-- Our bot forwards everything to the TARGET bot via user session
-- TARGET bot's responses (with dynamic arolinks links) are copied to the user
-- Buttons are mirrored — clicking sends the same action to TARGET bot
-- Every /start gets a FRESH arolinks URL from the TARGET bot
+Features:
+- Forwards ALL messages to TARGET bot via user session
+- Copies responses (text + media + buttons) to user
+- Replaces AS Multiverse links with OUR links:
+  - asmultiverse.com → t.me/ModAppsKing
+  - AS_Multiverserobot → KING_Multiverse_Robot (in deep links)
+  - Join Channel button → our channel
+  - Join Group button → our group
+- Forwards media (photos, videos, documents) from TARGET bot
+- Every /start gets a FRESH arolinks URL from TARGET bot
 
 Deploy on Render:
   - Set env vars: BOT_TOKEN, API_ID, API_HASH, SESSION_STRING, TARGET_BOT
@@ -90,7 +96,7 @@ user = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) if SESSIO
 
 
 # ---------------------------------------------------------------------------
-# Shared state — communication between bot handlers and target responses
+# Shared state
 # ---------------------------------------------------------------------------
 captured_msg = None
 response_event = asyncio.Event()
@@ -98,7 +104,37 @@ last_target_msg = None
 
 
 # ---------------------------------------------------------------------------
-# Target bot response handler — captures messages from TARGET bot
+# Link replacement — replace AS Multiverse URLs with ours
+# ---------------------------------------------------------------------------
+def replace_url(url):
+    """Replace AS Multiverse URLs with our bot's URLs."""
+    if not url:
+        return url
+    # Replace bot username in deep links
+    url = url.replace("AS_Multiverserobot", BOT_USERNAME)
+    # Replace website with our channel
+    url = url.replace("https://asmultiverse.com", CHANNEL_URL)
+    url = url.replace("http://asmultiverse.com", CHANNEL_URL)
+    url = url.replace("asmultiverse.com", "t.me/ModAppsKing")
+    return url
+
+
+def replace_text_links(text):
+    """Replace AS Multiverse links in message text."""
+    if not text:
+        return text
+    # Replace website links
+    text = text.replace("https://asmultiverse.com", CHANNEL_URL)
+    text = text.replace("http://asmultiverse.com", CHANNEL_URL)
+    text = text.replace("asmultiverse.com", "t.me/ModAppsKing")
+    # Replace bot deep links
+    text = text.replace("t.me/AS_Multiverserobot", f"t.me/{BOT_USERNAME}")
+    text = text.replace("@AS_Multiverserobot", f"@{BOT_USERNAME}")
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Target bot response handler
 # ---------------------------------------------------------------------------
 if user:
     @user.on(events.NewMessage(chats=TARGET_BOT))
@@ -121,10 +157,10 @@ if user:
 
 
 # ---------------------------------------------------------------------------
-# Helpers — copy target bot's buttons to our bot's format
+# Helpers — copy target bot's buttons with URL replacement
 # ---------------------------------------------------------------------------
 def copy_buttons(telethon_msg):
-    """Copy inline buttons from target bot's message."""
+    """Copy inline buttons from target bot's message, replacing URLs."""
     if not telethon_msg or not telethon_msg.buttons:
         return None
 
@@ -132,12 +168,23 @@ def copy_buttons(telethon_msg):
     for row in telethon_msg.buttons:
         row_buttons = []
         for btn in row:
+            btn_text = btn.text.strip()
+
+            # Replace Join Channel / Join Group buttons with OUR links
+            if "join channel" in btn_text.lower():
+                row_buttons.append(Button.url(btn_text, CHANNEL_URL))
+                continue
+            elif "join group" in btn_text.lower():
+                row_buttons.append(Button.url(btn_text, GROUP_URL))
+                continue
+
             if hasattr(btn, "url") and btn.url:
-                # URL button — keep the same URL (arolinks etc.)
-                row_buttons.append(Button.url(btn.text, btn.url))
+                # URL button — replace AS Multiverse URLs with ours
+                new_url = replace_url(btn.url)
+                row_buttons.append(Button.url(btn_text, new_url))
             elif hasattr(btn, "data") and btn.data:
                 # Callback button — map to our own callback
-                row_buttons.append(Button.inline(btn.text, data=f"act_{btn.text[:60]}"))
+                row_buttons.append(Button.inline(btn_text, data=f"act_{btn_text[:60]}"))
         if row_buttons:
             keyboard.append(row_buttons)
     return keyboard
@@ -193,20 +240,22 @@ async def click_target_button(row_idx, col_idx):
             if "start" in params:
                 start_value = params["start"][0]
                 await user.send_message(TARGET_BOT, f"/start {start_value}")
-                await asyncio.wait_for(response_event.wait(), timeout=30.0)
+                await asyncio.wait_for(response_event.wait(), timeout=60.0)
                 return captured_msg
+            return None
         elif hasattr(btn, "data") and btn.data:
             # Callback button → click it on target
             await btn.click()
-            await asyncio.wait_for(response_event.wait(), timeout=30.0)
+            await asyncio.wait_for(response_event.wait(), timeout=60.0)
             return captured_msg
         else:
             await user.send_message(TARGET_BOT, "/start")
-            await asyncio.wait_for(response_event.wait(), timeout=30.0)
+            await asyncio.wait_for(response_event.wait(), timeout=60.0)
             return captured_msg
 
         return None
     except asyncio.TimeoutError:
+        logger.error("Timeout waiting for button response!")
         return None
     except Exception as e:
         logger.error(f"Button click error: {e}")
@@ -214,10 +263,10 @@ async def click_target_button(row_idx, col_idx):
 
 
 # ---------------------------------------------------------------------------
-# Forward target's response to user
+# Forward target's response to user — with media support
 # ---------------------------------------------------------------------------
 async def forward_response(event, target_msg, status_msg=None):
-    """Send the TARGET bot's response to the user."""
+    """Send the TARGET bot's response to the user — text + media + buttons."""
     global last_target_msg
 
     if status_msg:
@@ -229,9 +278,44 @@ async def forward_response(event, target_msg, status_msg=None):
     if target_msg:
         last_target_msg = target_msg
         buttons = copy_buttons(target_msg)
-        text = target_msg.text or "✅ Done"
+        text = replace_text_links(target_msg.text or "")
 
-        await event.reply(text, buttons=buttons, link_preview=False)
+        # Check if the message has media (photo, video, document)
+        if target_msg.media:
+            try:
+                logger.info("Forwarding response with media...")
+                # Send media with caption and buttons
+                await event.reply(
+                    text or " ",
+                    file=target_msg.media,
+                    buttons=buttons,
+                    link_preview=False,
+                )
+                return
+            except Exception as e:
+                logger.error(f"Failed to send media directly: {e}")
+                # Fallback: try downloading and re-uploading
+                try:
+                    logger.info("Trying download & re-upload...")
+                    media_path = await target_msg.download_media()
+                    if media_path:
+                        await event.reply(
+                            text or " ",
+                            file=media_path,
+                            buttons=buttons,
+                            link_preview=False,
+                        )
+                        # Cleanup
+                        try:
+                            os.remove(media_path)
+                        except Exception:
+                            pass
+                        return
+                except Exception as e2:
+                    logger.error(f"Download & re-upload also failed: {e2}")
+
+        # Text only (no media or media failed)
+        await event.reply(text or "✅ Done", buttons=buttons, link_preview=False)
     else:
         await event.reply("❌ Target bot not responding. Try /start again.")
 
@@ -310,7 +394,7 @@ async def callback_handler(event):
     if last_target_msg and last_target_msg.buttons:
         for row_idx, row in enumerate(last_target_msg.buttons):
             for col_idx, btn in enumerate(row):
-                if btn.text == button_text:
+                if btn.text.strip() == button_text:
                     button_found = True
 
                     # Click the matching button on TARGET bot
@@ -385,6 +469,7 @@ async def main():
     logger.info(f"✅ Bot started: @{me.username}")
     logger.info(f"   Proxy target: {TARGET_BOT}")
     logger.info(f"   Channel: {CHANNEL_URL}")
+    logger.info(f"   Group: {GROUP_URL}")
 
     # Keep running
     await bot.run_until_disconnected()
