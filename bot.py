@@ -7,7 +7,7 @@ Uses Telethon with:
   - BOT_TOKEN  -> Bot mode (handles /start, /help, buttons)
   - SESSION_STRING -> User mode (forwards messages from source channels to bot)
   - API_ID, API_HASH -> from my.telegram.org
-  - AUTH_KEY_URL -> link for getting auth key (used in auth key message)
+  - AUTH_KEY_URL -> fallback link for auth key (when no param provided)
 
 Deploy on Render:
   - Set env vars: BOT_TOKEN, API_ID, API_HASH, SESSION_STRING, AUTH_KEY_URL
@@ -15,7 +15,8 @@ Deploy on Render:
 
 Bot Behaviour:
   - /start (no param)    -> Welcome message with banner
-  - /start <param>       -> Auth Key message (when app redirects to bot)
+  - /start <param>       -> Auth Key message with dynamic arolinks URL
+                           (param becomes https://arolinks.com/<param>)
 """
 
 import os
@@ -121,15 +122,16 @@ def main_keyboard():
     ]
 
 
-def auth_key_keyboard():
+def auth_key_keyboard(auth_url=None):
     """Keyboard for Auth Key message — matches original bot."""
+    url = auth_url or AUTH_KEY_URL
     return [
         [
             Button.url("📢 Join Channel", CHANNEL_URL),
             Button.url("💬 Join Group", GROUP_URL),
         ],
         [
-            Button.url("🔑 How To Get Auth Key", AUTH_KEY_URL),
+            Button.url("🔑 How To Get Auth Key", url),
             Button.inline("🔒 Close", data="close"),
         ],
     ]
@@ -150,11 +152,25 @@ async def start_handler(event):
     has_param = len(parts) > 1 and parts[1].strip()
 
     if has_param:
-        # /start <param> — App redirect → send Auth Key message
-        auth_msg = AUTH_KEY_TEXT.format(url=AUTH_KEY_URL)
+        # /start <param> — App redirect → generate arolinks URL from param
+        param = parts[1].strip()
+
+        # Build arolinks URL from the parameter (like original bot)
+        # App sends unique token → bot creates https://arolinks.com/TOKEN
+        if param.startswith("http"):
+            # Parameter is already a full URL
+            auth_url = param
+        elif param.startswith("arolinks.com/"):
+            # Parameter is partial arolinks URL
+            auth_url = f"https://{param}"
+        else:
+            # Parameter is a token → construct arolinks URL
+            auth_url = f"https://arolinks.com/{param}"
+
+        auth_msg = AUTH_KEY_TEXT.format(url=auth_url)
         await event.reply(
             auth_msg,
-            buttons=auth_key_keyboard(),
+            buttons=auth_key_keyboard(auth_url),
             link_preview=False,
         )
     else:
