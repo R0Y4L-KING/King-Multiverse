@@ -11,14 +11,8 @@ ARCHITECTURE (Proxy/Mirror Bot):
 Features:
 - Forwards ALL messages to TARGET bot via user session
 - Copies responses (text + media + buttons) to user
-- Replaces ALL AS Multiverse branding with OURS:
-  - asmultiverse.com → t.me/ModAppsKing
-  - AS MULTIVERSE → KING MULTIVERSE
-  - MadXABhi → R0Y4L-KING
-  - t.me/heheAnyQuestion → t.me/ModAppsKing
-  - AS_Multiverserobot → KING_Multiverse_Robot (deep links)
-  - Join Channel/Group buttons → our links
-- Smart media: photos downloaded+sent via BOT, videos sent via USER session (instant)
+- Replaces ALL AS Multiverse branding with OURS
+- Smart media: photos downloaded+sent via BOT, videos via 3-strategy delivery
 - Every /start gets a FRESH arolinks URL from TARGET bot
 
 Deploy on Render:
@@ -267,8 +261,8 @@ async def forward_response(event, target_msg, status_msg=None):
     """Send the TARGET bot's response to the user — text + media + buttons.
 
     Strategy:
-    - PHOTO: Download via user session, send via BOT (photo + caption + buttons in ONE message)
-    - VIDEO: Send via USER session (instant, no download)
+    - PHOTO: Download via user session, send via BOT (one message with buttons)
+    - VIDEO: 3 strategies (direct, forward, download+upload)
     - TEXT ONLY: Send via BOT with buttons
     """
     global last_target_msg
@@ -338,9 +332,12 @@ async def forward_response(event, target_msg, status_msg=None):
                             logger.error(f"User photo send also failed: {e3}")
 
             elif is_video:
-                # VIDEO: Send via USER session (FAST — instant!)
+                # VIDEO: Multiple delivery strategies
+                logger.info("Video detected, trying delivery strategies...")
+
+                # Strategy 1: Try user.send_file() directly (works if no privacy restrictions)
                 try:
-                    logger.info("Sending video via USER session (fast)...")
+                    logger.info("Trying USER session direct send...")
                     await user.send_file(
                         event.chat_id,
                         file=target_msg.media,
@@ -351,29 +348,44 @@ async def forward_response(event, target_msg, status_msg=None):
                         await event.reply("👆 Video sent above!", buttons=buttons, link_preview=False)
                     return
                 except Exception as e:
-                    logger.error(f"User session video send failed: {e}")
+                    logger.error(f"User direct send failed: {e}")
 
+                # Strategy 2: Forward message via user session (different API, might work)
                 try:
-                    logger.info("Trying BOT send with media reference...")
-                    await event.reply(
-                        text or " ",
-                        file=target_msg.media,
-                        buttons=buttons,
-                        link_preview=False,
+                    logger.info("Trying USER session forward...")
+                    await user.forward_messages(
+                        event.chat_id,
+                        target_msg,
                     )
+                    if buttons:
+                        await event.reply("👆 Video forwarded above!", buttons=buttons, link_preview=False)
                     return
                 except Exception as e:
-                    logger.error(f"Bot media send failed: {e}")
+                    logger.error(f"User forward failed: {e}")
 
+                # Strategy 3: Download via user session, then upload via BOT
                 try:
-                    logger.info("Trying download & re-upload (slow)...")
+                    logger.info("Trying download + BOT upload...")
+                    if status_msg:
+                        try:
+                            await status_msg.edit("📥 Downloading video...")
+                        except Exception:
+                            pass
+
                     media_path = await target_msg.download_media()
                     if media_path:
+                        if status_msg:
+                            try:
+                                await status_msg.edit("📤 Uploading video to you...")
+                            except Exception:
+                                pass
+
                         await event.reply(
                             text or " ",
                             file=media_path,
                             buttons=buttons,
                             link_preview=False,
+                            supports_streaming=True,
                         )
                         try:
                             os.remove(media_path)
@@ -381,7 +393,14 @@ async def forward_response(event, target_msg, status_msg=None):
                             pass
                         return
                 except Exception as e2:
-                    logger.error(f"Download & re-upload failed: {e2}")
+                    logger.error(f"Download & upload failed: {e2}")
+
+                # All strategies failed
+                await event.reply(
+                    "❌ Could not deliver video. Please try /start again.",
+                    buttons=buttons,
+                    link_preview=False,
+                )
 
             else:
                 # OTHER MEDIA: BOT with media reference
