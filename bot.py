@@ -110,8 +110,9 @@ def replace_url(url):
     url = url.replace("https://asmultiverse.com", CHANNEL_URL)
     url = url.replace("http://asmultiverse.com", CHANNEL_URL)
     url = url.replace("asmultiverse.com", "t.me/ModAppsKing")
-    url = url.replace("t.me/heheAnyQuestion", "t.me/ModAppsKing")
-    url = url.replace("https://t.me/heheAnyQuestion", CHANNEL_URL)
+    # Flexible: source bot keeps adding extra "he" repeats (heheAnyQuestion ->
+    # heheheAnyQuestion -> ...) specifically to dodge exact-string matching.
+    url = re.sub(r'(https?://)?t\.me/(he)+AnyQuestion', CHANNEL_URL, url, flags=re.IGNORECASE)
     return url
 
 
@@ -140,7 +141,7 @@ def replace_text_links(text):
     # regardless of what symbol/spacing sits in the gaps (after the NFKD
     # pass above already turned styled letters back into plain ones), then
     # strips any leftover non-ASCII decoration immediately wrapping it.
-    text = text.replace("t.me/heheAnyQuestion", "t.me/ModAppsKing")
+    text = re.sub(r'(https?://)?t\.me/(he)+AnyQuestion', CHANNEL_URL, text, flags=re.IGNORECASE)
     text = re.sub(
         r'(?<![A-Za-z])M.{0,2}A.{0,2}D.{0,3}A.{0,2}B.{0,2}H.{0,2}I(?![A-Za-z])',
         "MODAPPSKING",
