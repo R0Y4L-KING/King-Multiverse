@@ -419,37 +419,18 @@ async def forward_response(event, target_msg, status_msg=None):
                     except Exception as e0:
                         logger.error(f"Log-chat relay failed: {e0}")
 
-                # Strategy 1: Try user.send_file() directly
-                try:
-                    logger.info("Trying USER session direct send...")
-                    await user.send_file(
-                        event.chat_id,
-                        file=target_msg.media,
-                        caption=text or None,
-                        supports_streaming=True,
-                    )
-                    if buttons:
-                        await event.reply("👆 Video sent above!", buttons=buttons, link_preview=False)
-                    await _clear_status()
-                    return
-                except Exception as e:
-                    logger.error(f"User direct send failed: {e}")
+                # NOTE: strategies that had `user` (the userbot account)
+                # send/forward directly to the end-user's chat were removed
+                # here — that only ever "worked" for accounts the userbot
+                # already had a prior relationship with (e.g. its own
+                # owner), and when it did, it delivered from the userbot's
+                # own identity into a separate private chat instead of
+                # through the bot. For a real stranger it silently fails
+                # anyway. Delivery now only ever happens via `bot`, either
+                # through the log-chat relay above or the download/upload
+                # fallback below.
 
-                # Strategy 2: Forward message via user session
-                try:
-                    logger.info("Trying USER session forward...")
-                    await user.forward_messages(
-                        event.chat_id,
-                        target_msg,
-                    )
-                    if buttons:
-                        await event.reply("👆 Video forwarded above!", buttons=buttons, link_preview=False)
-                    await _clear_status()
-                    return
-                except Exception as e:
-                    logger.error(f"User forward failed: {e}")
-
-                # Strategy 3: Download via user session, then upload via BOT
+                # Strategy 1: Download via user session, then upload via BOT
                 # (only reached if LOG_CHAT_ID isn't set, or the relay itself
                 # failed). This is a genuine two-hop transfer, so time WILL
                 # scale with file size — set LOG_CHAT_ID above to avoid this
