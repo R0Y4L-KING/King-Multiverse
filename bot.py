@@ -35,7 +35,11 @@ TARGET_BOT = os.environ.get("TARGET_BOT", "@AS_Multiverserobot")
 # Optional: a private channel/group where BOTH the user session and the bot
 # are members. When set, video delivery is instant regardless of size —
 # see relay_via_log_chat() for why this fixes the size-dependent delay.
-LOG_CHAT_ID = os.environ.get("LOG_CHAT_ID", "")
+_log_chat_raw = os.environ.get("LOG_CHAT_ID", "").strip()
+try:
+    LOG_CHAT_ID = int(_log_chat_raw) if _log_chat_raw else None
+except ValueError:
+    LOG_CHAT_ID = _log_chat_raw or None  # allow @username as a fallback
 
 BOT_USERNAME = "KING_Multiverse_Robot"
 BANNER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Tg_Banner.jpg")
@@ -121,16 +125,24 @@ def replace_text_links(text):
     text = text.replace("@AS_Multiverserobot", f"@{BOT_USERNAME}")
     text = text.replace("AS MULTIVERSE", "KING MULTIVERSE")
     text = text.replace("AS Multiverse", "KING MULTIVERSE")
-    # Replace MadXABhi branding with MODAPPSKING
+    # Replace MadXABhi branding with MODAPPSKING — regex-based because the
+    # source bot swaps in unicode look-alike characters and decorative
+    # brackets (e.g. "【✳MAD乂ABHI✳】") specifically to dodge plain .replace()
+    # matching. This matches M-A-D-<anything>-A-B-H-I regardless of what
+    # symbol/spacing sits in the gaps, then cleans up any decorative
+    # brackets left wrapping it.
     text = text.replace("t.me/heheAnyQuestion", "t.me/ModAppsKing")
-    text = text.replace("MadXABhi", "MODAPPSKING")
-    text = text.replace("M A D X A B H I", "M O D A P P S K I N G")
-    text = text.replace("MAD X ABHI", "MODAPPSKING")
-    text = text.replace("Mad XABHI", "MODAPPSKING")
-    text = text.replace("MAD XABHI", "MODAPPSKING")
-    text = text.replace("MADXABHI", "MODAPPSKING")
-    text = text.replace("MadXAbhi", "MODAPPSKING")
-    text = text.replace("madxabhi", "MODAPPSKING")
+    text = re.sub(
+        r'(?<![A-Za-z])M.{0,2}A.{0,2}D.{0,3}A.{0,2}B.{0,2}H.{0,2}I(?![A-Za-z])',
+        "MODAPPSKING",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r'[\[\(\{【<][\s✳✴🌟☀~\-_*※]*MODAPPSKING[\s✳✴🌟☀~\-_*※]*[\]\)\}】>]',
+        "MODAPPSKING",
+        text,
+    )
     return text
 
 
@@ -289,11 +301,16 @@ async def forward_response(event, target_msg, status_msg=None):
     """Send the TARGET bot's response to the user — text + media + buttons."""
     global last_target_msg
 
-    if status_msg:
-        try:
-            await status_msg.delete()
-        except Exception:
-            pass
+    async def _clear_status():
+        # Was previously called unconditionally at the top of this function,
+        # which deleted status_msg before video's Strategy 3 ever got a
+        # chance to edit it for progress %. Now called explicitly at each
+        # point where we're done with it (or don't need it, e.g. photo).
+        if status_msg:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
 
     if target_msg:
         last_target_msg = target_msg
@@ -313,6 +330,7 @@ async def forward_response(event, target_msg, status_msg=None):
 
             if is_photo:
                 # PHOTO: Download via user session, then send via BOT
+                await _clear_status()
                 try:
                     logger.info("Sending photo: downloading...")
                     photo_path = await target_msg.download_media()
@@ -368,6 +386,7 @@ async def forward_response(event, target_msg, status_msg=None):
                         log_msg = await user.forward_messages(LOG_CHAT_ID, target_msg)
                         await bot.forward_messages(event.chat_id, log_msg, from_peer=LOG_CHAT_ID)
                         logger.info(f"Log-chat relay succeeded in {time.time() - t0:.1f}s")
+                        await _clear_status()
                         if buttons:
                             await event.reply("👆 Video sent above!", buttons=buttons, link_preview=False)
                         try:
@@ -389,6 +408,7 @@ async def forward_response(event, target_msg, status_msg=None):
                     )
                     if buttons:
                         await event.reply("👆 Video sent above!", buttons=buttons, link_preview=False)
+                    await _clear_status()
                     return
                 except Exception as e:
                     logger.error(f"User direct send failed: {e}")
@@ -402,6 +422,7 @@ async def forward_response(event, target_msg, status_msg=None):
                     )
                     if buttons:
                         await event.reply("👆 Video forwarded above!", buttons=buttons, link_preview=False)
+                    await _clear_status()
                     return
                 except Exception as e:
                     logger.error(f"User forward failed: {e}")
@@ -449,11 +470,13 @@ async def forward_response(event, target_msg, status_msg=None):
                             os.remove(media_path)
                         except Exception:
                             pass
+                        await _clear_status()
                         return
                 except Exception as e2:
                     logger.error(f"Download & upload failed: {e2}")
 
                 # All strategies failed
+                await _clear_status()
                 await event.reply(
                     "❌ Could not deliver video. Please try /start again.",
                     buttons=buttons,
@@ -462,6 +485,7 @@ async def forward_response(event, target_msg, status_msg=None):
 
             else:
                 # OTHER MEDIA: BOT with media reference
+                await _clear_status()
                 try:
                     await event.reply(
                         text or " ",
@@ -485,12 +509,14 @@ async def forward_response(event, target_msg, status_msg=None):
                         logger.error(f"User send also failed: {e2}")
 
         # Text only (no media or media failed)
+        await _clear_status()
         if text:
             await event.reply(text, buttons=buttons, link_preview=False)
         else:
             logger.warning("Empty response from target — no text, no media")
             await event.reply("✅ Done", buttons=buttons, link_preview=False)
     else:
+        await _clear_status()
         await event.reply("❌ Target bot not responding. Try /start again.")
 
 
@@ -655,6 +681,20 @@ async def main():
     logger.info(f"   Proxy target: {TARGET_BOT}")
     logger.info(f"   Channel: {CHANNEL_URL}")
     logger.info(f"   Group: {GROUP_URL}")
+
+    if LOG_CHAT_ID:
+        try:
+            # Telethon can't message/forward-from a peer it has never seen,
+            # even one you're an admin of, until it has listed dialogs (or
+            # otherwise resolved that chat) at least once per client/session.
+            await user.get_dialogs()
+            await bot.get_dialogs()
+            log_entity = await user.get_entity(LOG_CHAT_ID)
+            await bot.get_entity(LOG_CHAT_ID)
+            logger.info(f"✅ LOG_CHAT_ID resolved: {getattr(log_entity, 'title', LOG_CHAT_ID)}")
+        except Exception as e:
+            logger.error(f"❌ Could not resolve LOG_CHAT_ID '{LOG_CHAT_ID}': {e}")
+            logger.error("   Make sure BOTH the user account and the bot are members/admins of that chat.")
 
     await bot.run_until_disconnected()
 
