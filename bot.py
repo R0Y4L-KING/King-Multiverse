@@ -694,8 +694,15 @@ async def main():
             # `bot` is a member, so it receives that as a real update, which
             # is how Telethon actually caches a channel's access_hash for a
             # bot client.
-            await user.get_dialogs()
-            log_entity = await user.get_entity(LOG_CHAT_ID)
+            await user.get_dialogs(limit=None)
+            try:
+                log_entity = await user.get_entity(LOG_CHAT_ID)
+            except ValueError:
+                # One retry: occasionally the first dialog sync doesn't
+                # surface every chat yet.
+                await asyncio.sleep(2)
+                await user.get_dialogs(limit=None)
+                log_entity = await user.get_entity(LOG_CHAT_ID)
             logger.info(f"✅ LOG_CHAT_ID resolved (user side): {getattr(log_entity, 'title', LOG_CHAT_ID)}")
 
             ping = await user.send_message(LOG_CHAT_ID, "🔧 Bot init ping — safe to delete.")
