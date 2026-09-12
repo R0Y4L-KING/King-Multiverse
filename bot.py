@@ -684,14 +684,30 @@ async def main():
 
     if LOG_CHAT_ID:
         try:
-            # Telethon can't message/forward-from a peer it has never seen,
-            # even one you're an admin of, until it has listed dialogs (or
-            # otherwise resolved that chat) at least once per client/session.
+            # Telegram blocks bot accounts from calling getDialogs entirely
+            # (that's user-account-only), so `bot` can't learn the channel
+            # that way. `user` (a real account) can list dialogs though, so
+            # we resolve it there, then send one message into the channel —
+            # `bot` is a member, so it receives that as a real update, which
+            # is how Telethon actually caches a channel's access_hash for a
+            # bot client.
             await user.get_dialogs()
-            await bot.get_dialogs()
             log_entity = await user.get_entity(LOG_CHAT_ID)
-            await bot.get_entity(LOG_CHAT_ID)
-            logger.info(f"✅ LOG_CHAT_ID resolved: {getattr(log_entity, 'title', LOG_CHAT_ID)}")
+            logger.info(f"✅ LOG_CHAT_ID resolved (user side): {getattr(log_entity, 'title', LOG_CHAT_ID)}")
+
+            ping = await user.send_message(LOG_CHAT_ID, "🔧 Bot init ping — safe to delete.")
+            await asyncio.sleep(2)
+            try:
+                await bot.get_entity(LOG_CHAT_ID)
+                logger.info("✅ LOG_CHAT_ID resolved (bot side) — video relay ready.")
+            except Exception as be:
+                logger.error(f"❌ Bot still can't see LOG_CHAT_ID: {be}")
+                logger.error("   Make sure the BOT ITSELF (not just the user account) is a member/admin there.")
+            finally:
+                try:
+                    await ping.delete()
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"❌ Could not resolve LOG_CHAT_ID '{LOG_CHAT_ID}': {e}")
             logger.error("   Make sure BOTH the user account and the bot are members/admins of that chat.")
