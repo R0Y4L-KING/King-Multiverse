@@ -14,6 +14,7 @@ Deploy on Render:
 """
 
 import os
+import time
 import asyncio
 import logging
 import threading
@@ -31,6 +32,10 @@ API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 SESSION_STRING = os.environ.get("SESSION_STRING", "")
 TARGET_BOT = os.environ.get("TARGET_BOT", "@AS_Multiverserobot")
+# Optional: a private channel/group where BOTH the user session and the bot
+# are members. When set, video delivery is instant regardless of size —
+# see relay_via_log_chat() for why this fixes the size-dependent delay.
+LOG_CHAT_ID = os.environ.get("LOG_CHAT_ID", "")
 
 BOT_USERNAME = "KING_Multiverse_Robot"
 BANNER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Tg_Banner.jpg")
@@ -253,6 +258,31 @@ async def click_target_button(row_idx, col_idx):
 
 
 # ---------------------------------------------------------------------------
+# Throttled progress callback — shows live % during download/upload instead
+# of the bot looking frozen while a big video is transferred.
+# ---------------------------------------------------------------------------
+def _make_progress_cb(status_msg, label):
+    state = {"pct": -100, "t": 0.0}
+
+    async def cb(current, total):
+        if not status_msg or not total:
+            return
+        pct = int(current * 100 / total)
+        now = time.time()
+        # Only edit every ~15% or ~3s, and always on completion, to avoid
+        # Telegram edit-rate limits on big files with many chunks.
+        if pct < 100 and pct - state["pct"] < 15 and now - state["t"] < 3:
+            return
+        state["pct"], state["t"] = pct, now
+        try:
+            await status_msg.edit(f"{label} {pct}%")
+        except Exception:
+            pass
+
+    return cb
+
+
+# ---------------------------------------------------------------------------
 # Forward target's response to user — smart media handling
 # ---------------------------------------------------------------------------
 async def forward_response(event, target_msg, status_msg=None):
@@ -327,6 +357,27 @@ async def forward_response(event, target_msg, status_msg=None):
                 # VIDEO: Multiple delivery strategies
                 logger.info("Video detected, trying delivery strategies...")
 
+                # Strategy 0: Relay through a shared log chat — INSTANT, any size.
+                # `user` has no access_hash for the end-user's chat (it has never
+                # talked to them), so strategies 1/2 below fail regardless of
+                # forward protection. Routing through a chat BOTH `user` and
+                # `bot` are already members of sidesteps that entirely.
+                if LOG_CHAT_ID:
+                    try:
+                        t0 = time.time()
+                        log_msg = await user.forward_messages(LOG_CHAT_ID, target_msg)
+                        await bot.forward_messages(event.chat_id, log_msg, from_peer=LOG_CHAT_ID)
+                        logger.info(f"Log-chat relay succeeded in {time.time() - t0:.1f}s")
+                        if buttons:
+                            await event.reply("👆 Video sent above!", buttons=buttons, link_preview=False)
+                        try:
+                            await log_msg.delete()
+                        except Exception:
+                            pass
+                        return
+                    except Exception as e0:
+                        logger.error(f"Log-chat relay failed: {e0}")
+
                 # Strategy 1: Try user.send_file() directly
                 try:
                     logger.info("Trying USER session direct send...")
@@ -356,19 +407,29 @@ async def forward_response(event, target_msg, status_msg=None):
                     logger.error(f"User forward failed: {e}")
 
                 # Strategy 3: Download via user session, then upload via BOT
+                # (only reached if LOG_CHAT_ID isn't set, or the relay itself
+                # failed). This is a genuine two-hop transfer, so time WILL
+                # scale with file size — set LOG_CHAT_ID above to avoid this
+                # path entirely.
                 try:
-                    logger.info("Trying download + BOT upload...")
+                    doc_size = doc.size if doc else 0
+                    t0 = time.time()
+                    logger.info(f"Trying download + BOT upload... size={doc_size/1_048_576:.1f}MB")
                     if status_msg:
                         try:
-                            await status_msg.edit("📥 Downloading video...")
+                            await status_msg.edit("📥 Downloading video... 0%")
                         except Exception:
                             pass
 
-                    media_path = await target_msg.download_media()
+                    media_path = await target_msg.download_media(
+                        progress_callback=_make_progress_cb(status_msg, "📥 Downloading video...")
+                    )
                     if media_path:
+                        t1 = time.time()
+                        logger.info(f"Download done in {t1 - t0:.1f}s")
                         if status_msg:
                             try:
-                                await status_msg.edit("📤 Uploading video to you...")
+                                await status_msg.edit("📤 Uploading video... 0%")
                             except Exception:
                                 pass
 
@@ -378,6 +439,11 @@ async def forward_response(event, target_msg, status_msg=None):
                             buttons=buttons,
                             link_preview=False,
                             supports_streaming=True,
+                            progress_callback=_make_progress_cb(status_msg, "📤 Uploading video..."),
+                        )
+                        logger.info(
+                            f"Upload done in {time.time() - t1:.1f}s "
+                            f"(total {time.time() - t0:.1f}s, size={doc_size/1_048_576:.1f}MB)"
                         )
                         try:
                             os.remove(media_path)
