@@ -19,6 +19,7 @@ import asyncio
 import logging
 import threading
 import re
+import unicodedata
 import urllib.parse
 from flask import Flask, jsonify
 from telethon import TelegramClient, Button, events
@@ -118,6 +119,13 @@ def replace_text_links(text):
     """Replace AS Multiverse links and branding in message text."""
     if not text:
         return text
+    # Normalize decorative Unicode letter variants (squared 🄼🄰🄳, circled,
+    # fullwidth, mathematical bold/italic, etc.) back to plain ASCII letters
+    # FIRST — the source bot keeps rotating which "styled" alphabet it uses
+    # specifically to dodge text matching, and NFKD undoes nearly all of
+    # them since Unicode defines a compatibility decomposition for these
+    # blocks back to their base Latin letter.
+    text = unicodedata.normalize("NFKD", text)
     text = text.replace("https://asmultiverse.com", CHANNEL_URL)
     text = text.replace("http://asmultiverse.com", CHANNEL_URL)
     text = text.replace("asmultiverse.com", "t.me/ModAppsKing")
@@ -127,10 +135,11 @@ def replace_text_links(text):
     text = text.replace("AS Multiverse", "KING MULTIVERSE")
     # Replace MadXABhi branding with MODAPPSKING — regex-based because the
     # source bot swaps in unicode look-alike characters and decorative
-    # brackets (e.g. "【✳MAD乂ABHI✳】") specifically to dodge plain .replace()
-    # matching. This matches M-A-D-<anything>-A-B-H-I regardless of what
-    # symbol/spacing sits in the gaps, then cleans up any decorative
-    # brackets left wrapping it.
+    # brackets/hieroglyphs (e.g. "𓊈𒆜MAD乂ABHI𒆜𓊉") specifically to dodge
+    # plain .replace() matching. This matches M-A-D-<anything>-A-B-H-I
+    # regardless of what symbol/spacing sits in the gaps (after the NFKD
+    # pass above already turned styled letters back into plain ones), then
+    # strips any leftover non-ASCII decoration immediately wrapping it.
     text = text.replace("t.me/heheAnyQuestion", "t.me/ModAppsKing")
     text = re.sub(
         r'(?<![A-Za-z])M.{0,2}A.{0,2}D.{0,3}A.{0,2}B.{0,2}H.{0,2}I(?![A-Za-z])',
@@ -139,7 +148,7 @@ def replace_text_links(text):
         flags=re.IGNORECASE,
     )
     text = re.sub(
-        r'[\[\(\{【<][\s✳✴🌟☀~\-_*※]*MODAPPSKING[\s✳✴🌟☀~\-_*※]*[\]\)\}】>]',
+        r'[^\x00-\x7F]{0,4}\s*MODAPPSKING\s*[^\x00-\x7F]{0,4}',
         "MODAPPSKING",
         text,
     )
@@ -384,11 +393,23 @@ async def forward_response(event, target_msg, status_msg=None):
                     try:
                         t0 = time.time()
                         log_msg = await user.forward_messages(LOG_CHAT_ID, target_msg)
-                        await bot.forward_messages(event.chat_id, log_msg, from_peer=LOG_CHAT_ID)
+                        # Fetch the log-chat copy through `bot`'s own session
+                        # (not `user`'s) so the media reference is valid for
+                        # `bot`, then send_file — NOT forward_messages — so
+                        # this lands as a genuinely new message. Forwarding
+                        # keeps Telegram's original-source tag ("Forwarded
+                        # from AS MULTIVERSE...") forever; send_file doesn't.
+                        bot_copy = await bot.get_messages(LOG_CHAT_ID, ids=log_msg.id)
+                        await bot.send_file(
+                            event.chat_id,
+                            file=bot_copy.media,
+                            caption=text or None,
+                            buttons=buttons,
+                            supports_streaming=True,
+                            link_preview=False,
+                        )
                         logger.info(f"Log-chat relay succeeded in {time.time() - t0:.1f}s")
                         await _clear_status()
-                        if buttons:
-                            await event.reply("👆 Video sent above!", buttons=buttons, link_preview=False)
                         try:
                             await log_msg.delete()
                         except Exception:
