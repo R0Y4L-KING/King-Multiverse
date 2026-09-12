@@ -11,8 +11,14 @@ ARCHITECTURE (Proxy/Mirror Bot):
 Features:
 - Forwards ALL messages to TARGET bot via user session
 - Copies responses (text + media + buttons) to user
-- Replaces AS Multiverse links with OUR links
-- Smart media: photos via BOT (one message), videos via USER session (instant)
+- Replaces ALL AS Multiverse branding with OURS:
+  - asmultiverse.com → t.me/ModAppsKing
+  - AS MULTIVERSE → KING MULTIVERSE
+  - MadXABhi → R0Y4L-KING
+  - t.me/heheAnyQuestion → t.me/ModAppsKing
+  - AS_Multiverserobot → KING_Multiverse_Robot (deep links)
+  - Join Channel/Group buttons → our links
+- Smart media: photos downloaded+sent via BOT, videos sent via USER session (instant)
 - Every /start gets a FRESH arolinks URL from TARGET bot
 
 Deploy on Render:
@@ -84,10 +90,7 @@ def run_flask():
 # ---------------------------------------------------------------------------
 # Telethon Clients
 # ---------------------------------------------------------------------------
-# Bot client — users interact with this (our bot)
 bot = TelegramClient("king_bot", API_ID, API_HASH)
-
-# User client — talks to the TARGET bot (original AS Multiverse)
 user = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) if SESSION_STRING else None
 
 
@@ -100,7 +103,7 @@ last_target_msg = None
 
 
 # ---------------------------------------------------------------------------
-# Link replacement — replace AS Multiverse URLs with ours
+# Link replacement — replace ALL AS Multiverse branding with ours
 # ---------------------------------------------------------------------------
 def replace_url(url):
     """Replace AS Multiverse URLs with our bot's URLs."""
@@ -110,11 +113,13 @@ def replace_url(url):
     url = url.replace("https://asmultiverse.com", CHANNEL_URL)
     url = url.replace("http://asmultiverse.com", CHANNEL_URL)
     url = url.replace("asmultiverse.com", "t.me/ModAppsKing")
+    url = url.replace("t.me/heheAnyQuestion", "t.me/ModAppsKing")
+    url = url.replace("https://t.me/heheAnyQuestion", CHANNEL_URL)
     return url
 
 
 def replace_text_links(text):
-    """Replace AS Multiverse links in message text."""
+    """Replace AS Multiverse links and branding in message text."""
     if not text:
         return text
     text = text.replace("https://asmultiverse.com", CHANNEL_URL)
@@ -122,6 +127,13 @@ def replace_text_links(text):
     text = text.replace("asmultiverse.com", "t.me/ModAppsKing")
     text = text.replace("t.me/AS_Multiverserobot", f"t.me/{BOT_USERNAME}")
     text = text.replace("@AS_Multiverserobot", f"@{BOT_USERNAME}")
+    text = text.replace("AS MULTIVERSE", "KING MULTIVERSE")
+    text = text.replace("AS Multiverse", "KING MULTIVERSE")
+    text = text.replace("t.me/heheAnyQuestion", "t.me/ModAppsKing")
+    text = text.replace("MadXABhi", "R0Y4L-KING")
+    text = text.replace("M A D X A B H I", "R 0 Y 4 L - K I N G")
+    text = text.replace("MAD XABHI", "R0Y4L-KING")
+    text = text.replace("Mad XABHI", "R0Y4L-KING")
     return text
 
 
@@ -255,7 +267,7 @@ async def forward_response(event, target_msg, status_msg=None):
     """Send the TARGET bot's response to the user — text + media + buttons.
 
     Strategy:
-    - PHOTO: Send via BOT (photo + caption + buttons in ONE message)
+    - PHOTO: Download via user session, send via BOT (photo + caption + buttons in ONE message)
     - VIDEO: Send via USER session (instant, no download)
     - TEXT ONLY: Send via BOT with buttons
     """
@@ -284,29 +296,46 @@ async def forward_response(event, target_msg, status_msg=None):
                     is_video = True
 
             if is_photo:
-                # PHOTO: Send via BOT — photo + text + buttons in ONE message
+                # PHOTO: Download via user session, then send via BOT
                 try:
-                    logger.info("Sending photo via BOT (with buttons)...")
-                    await event.reply(
-                        text or " ",
-                        file=target_msg.media,
-                        buttons=buttons,
-                        link_preview=False,
-                    )
-                    return
-                except Exception as e:
-                    logger.error(f"Bot photo send failed: {e}")
-                    try:
-                        await user.send_file(
-                            event.chat_id,
-                            file=target_msg.media,
-                            caption=text or None,
+                    logger.info("Sending photo: downloading...")
+                    photo_path = await target_msg.download_media()
+                    if photo_path:
+                        logger.info("Sending photo via BOT...")
+                        await event.reply(
+                            text or " ",
+                            file=photo_path,
+                            buttons=buttons,
+                            link_preview=False,
                         )
-                        if buttons:
-                            await event.reply("👆", buttons=buttons, link_preview=False)
+                        try:
+                            os.remove(photo_path)
+                        except Exception:
+                            pass
+                        return
+                except Exception as e:
+                    logger.error(f"Photo download+send failed: {e}")
+                    try:
+                        await event.reply(
+                            text or " ",
+                            file=target_msg.media,
+                            buttons=buttons,
+                            link_preview=False,
+                        )
                         return
                     except Exception as e2:
-                        logger.error(f"User photo send also failed: {e2}")
+                        logger.error(f"Direct photo send also failed: {e2}")
+                        try:
+                            await user.send_file(
+                                event.chat_id,
+                                file=target_msg.media,
+                                caption=text or None,
+                            )
+                            if buttons:
+                                await event.reply("👆", buttons=buttons, link_preview=False)
+                            return
+                        except Exception as e3:
+                            logger.error(f"User photo send also failed: {e3}")
 
             elif is_video:
                 # VIDEO: Send via USER session (FAST — instant!)
