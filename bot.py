@@ -97,6 +97,14 @@ user = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) if SESSIO
 captured_msg = None
 response_event = asyncio.Event()
 last_target_msg = None
+# `user` (the userbot session) can only ever be "waiting on one response from
+# TARGET_BOT" at a time — last_target_msg/response_event are shared globals,
+# not per-request. Without this lock, several /start's fired close together
+# get their responses cross-matched (one request's reply routed to another's
+# chat, stray error messages posted into TARGET_BOT's own chat or the log
+# channel, etc.) — exactly what rapid-fire testing surfaced. The lock makes
+# concurrent requests queue safely instead of corrupting each other.
+request_lock = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -548,8 +556,9 @@ async def start_handler(event):
         timeout = 30.0
 
     try:
-        target_response = await send_to_target(text, timeout=timeout)
-        await forward_response(event, target_response, status)
+        async with request_lock:
+            target_response = await send_to_target(text, timeout=timeout)
+            await forward_response(event, target_response, status)
     except Exception as e:
         logger.error(f"Error in start handler: {e}")
         try:
@@ -610,15 +619,16 @@ async def callback_handler(event):
         status = await event.reply("⏳ Processing...")
 
     button_found = False
-    if last_target_msg and last_target_msg.buttons:
-        for row_idx, row in enumerate(last_target_msg.buttons):
-            for col_idx, btn in enumerate(row):
-                if btn.text.strip() == button_text:
-                    button_found = True
+    async with request_lock:
+        if last_target_msg and last_target_msg.buttons:
+            for row_idx, row in enumerate(last_target_msg.buttons):
+                for col_idx, btn in enumerate(row):
+                    if btn.text.strip() == button_text:
+                        button_found = True
 
-                    target_response = await click_target_button(row_idx, col_idx)
-                    await forward_response(event, target_response, status)
-                    return
+                        target_response = await click_target_button(row_idx, col_idx)
+                        await forward_response(event, target_response, status)
+                        return
 
     if not button_found:
         try:
