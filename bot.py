@@ -8,13 +8,6 @@ ARCHITECTURE (Proxy/Mirror Bot):
                                               ↓
   User ← Our Bot ← (copied response) ← Auth Key message + fresh arolinks URL
 
-Features:
-- Forwards ALL messages to TARGET bot via user session
-- Copies responses (text + media + buttons) to user
-- Replaces ALL AS Multiverse branding with OURS
-- Smart media: photos downloaded+sent via BOT, videos via 3-strategy delivery
-- Every /start gets a FRESH arolinks URL from TARGET bot
-
 Deploy on Render:
   - Set env vars: BOT_TOKEN, API_ID, API_HASH, SESSION_STRING, TARGET_BOT
   - Start command: python bot.py
@@ -123,11 +116,16 @@ def replace_text_links(text):
     text = text.replace("@AS_Multiverserobot", f"@{BOT_USERNAME}")
     text = text.replace("AS MULTIVERSE", "KING MULTIVERSE")
     text = text.replace("AS Multiverse", "KING MULTIVERSE")
+    # Replace MadXABhi branding with MODAPPSKING
     text = text.replace("t.me/heheAnyQuestion", "t.me/ModAppsKing")
-    text = text.replace("MadXABhi", "R0Y4L-KING")
-    text = text.replace("M A D X A B H I", "R 0 Y 4 L - K I N G")
-    text = text.replace("MAD XABHI", "R0Y4L-KING")
-    text = text.replace("Mad XABHI", "R0Y4L-KING")
+    text = text.replace("MadXABhi", "MODAPPSKING")
+    text = text.replace("M A D X A B H I", "M O D A P P S K I N G")
+    text = text.replace("MAD X ABHI", "MODAPPSKING")
+    text = text.replace("Mad XABHI", "MODAPPSKING")
+    text = text.replace("MAD XABHI", "MODAPPSKING")
+    text = text.replace("MADXABHI", "MODAPPSKING")
+    text = text.replace("MadXAbhi", "MODAPPSKING")
+    text = text.replace("madxabhi", "MODAPPSKING")
     return text
 
 
@@ -258,13 +256,7 @@ async def click_target_button(row_idx, col_idx):
 # Forward target's response to user — smart media handling
 # ---------------------------------------------------------------------------
 async def forward_response(event, target_msg, status_msg=None):
-    """Send the TARGET bot's response to the user — text + media + buttons.
-
-    Strategy:
-    - PHOTO: Download via user session, send via BOT (one message with buttons)
-    - VIDEO: 3 strategies (direct, forward, download+upload)
-    - TEXT ONLY: Send via BOT with buttons
-    """
+    """Send the TARGET bot's response to the user — text + media + buttons."""
     global last_target_msg
 
     if status_msg:
@@ -335,7 +327,7 @@ async def forward_response(event, target_msg, status_msg=None):
                 # VIDEO: Multiple delivery strategies
                 logger.info("Video detected, trying delivery strategies...")
 
-                # Strategy 1: Try user.send_file() directly (works if no privacy restrictions)
+                # Strategy 1: Try user.send_file() directly
                 try:
                     logger.info("Trying USER session direct send...")
                     await user.send_file(
@@ -350,7 +342,7 @@ async def forward_response(event, target_msg, status_msg=None):
                 except Exception as e:
                     logger.error(f"User direct send failed: {e}")
 
-                # Strategy 2: Forward message via user session (different API, might work)
+                # Strategy 2: Forward message via user session
                 try:
                     logger.info("Trying USER session forward...")
                     await user.forward_messages(
